@@ -80,6 +80,11 @@ impl Device for Mailbox {
             (0x10, true) => 0x10,
             (0x14, true) => 0x20,
             (0x18, true) => 0x40,
+            // Requester word +0x1c: the requester writes 0 when it opens the
+            // channel and 0x7f (the seven cause positions) when it closes it,
+            // and never reads it back. It is stored only; whether it gates the
+            // interrupt outputs is unknown, so it changes none.
+            (0x1c, false) => 0,
             (0x20, _) => 0,
             _ if value == 0 => 0,
             _ => {
@@ -270,5 +275,27 @@ mod tests {
         invalid["causes"] = json!(2);
         assert!(m.restore(&invalid).is_err());
         assert!(h.core.is_empty() && h.irqs.is_empty());
+    }
+    #[test]
+    fn requester_word_1c_is_stored_without_raising_or_lowering_outputs() {
+        let mut m = device();
+        let mut h = TestHost::default();
+        write(&mut m, &mut h, 0, 0, 0x2a << 6);
+        write(&mut m, &mut h, 4, 0x10, 0xfeed);
+        write(&mut m, &mut h, 0, 0x1c, 0x7f);
+        assert_eq!(h.core, vec![(4, 55, true)]);
+        assert_eq!(h.irqs, vec![(141, true)]);
+        assert_eq!(m.save()["causes"], 0x11);
+        let mut cx = Cx::new(&mut h, 0, 0, 0);
+        assert_eq!(m.read(&mut cx, 0xff90e11c, 4), 0x7f);
+        write(&mut m, &mut h, 0, 0x1c, 0);
+        let mut cx = Cx::new(&mut h, 0, 0, 0);
+        assert_eq!(m.read(&mut cx, 0xff90e11c, 4), 0);
+        assert_eq!(m.save()["causes"], 0x11);
+        let before = m.save();
+        let mut cx = Cx::new(&mut h, 4, 0, 0);
+        m.write(&mut cx, 0xff90e11c, 4, 0x7f);
+        assert!(cx.is_unmodeled());
+        assert_eq!(m.save(), before);
     }
 }
